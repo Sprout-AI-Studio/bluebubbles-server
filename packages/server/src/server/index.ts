@@ -31,7 +31,8 @@ import {
     WebhookService,
     ScheduledMessagesService,
     OauthService,
-    ZrokService
+    ZrokService,
+    RemoteConfigService
 } from "@server/services";
 import { EventCache } from "@server/eventCache";
 import { runTerminalScript, openSystemPreferences, startMessages } from "@server/api/apple/scripts";
@@ -130,6 +131,8 @@ class BlueBubblesServer extends EventEmitter {
     fcm: FCMService;
 
     networkChecker: NetworkService;
+
+    remoteConfigService: RemoteConfigService;
 
     caffeinate: CaffeinateService;
 
@@ -497,6 +500,13 @@ class BlueBubblesServer extends EventEmitter {
         } catch (ex: any) {
             this.logger.error(`Failed to start Scheduled Message service! ${ex?.message ?? String(ex)}}`);
         }
+
+        try {
+            this.logger.info("Initializing Remote Config Service...");
+            this.remoteConfigService = new RemoteConfigService();
+        } catch (ex: any) {
+            this.logger.error(`Failed to initialize Remote Config Service! ${ex?.message ?? String(ex)}}`);
+        }
     }
 
     /**
@@ -557,6 +567,13 @@ class BlueBubblesServer extends EventEmitter {
         } catch (ex: any) {
             this.logger.error(`Failed to start FCM service! ${ex?.message ?? String(ex)}}`);
         }
+
+        try {
+            this.logger.info("Starting Remote Config Service...");
+            this.remoteConfigService?.start();
+        } catch (ex: any) {
+            this.logger.error(`Failed to start Remote Config Service! ${ex?.message ?? String(ex)}}`);
+        }
     }
 
     async stopServices(): Promise<void> {
@@ -604,6 +621,12 @@ class BlueBubblesServer extends EventEmitter {
             this.scheduledMessages?.stop();
         } catch (ex: any) {
             this.logger.error(`Failed to stop Scheduled Messages service! ${ex?.message ?? ex}`);
+        }
+
+        try {
+            this.remoteConfigService?.stop();
+        } catch (ex: any) {
+            this.logger.error(`Failed to stop Remote Config Service! ${ex?.message ?? ex}`);
         }
 
         this.logger.info("Finished stopping services...");
