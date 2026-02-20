@@ -15,6 +15,7 @@ import { FileStream, Success } from "../responses/success";
 import { BadRequest, IMessageError, NotFound } from "../responses/errors";
 import { parseWithQuery } from "../utils";
 import { isMinVentura } from "@server/env";
+import { SentryService, LifecycleManager } from "@server/services";
 
 export class MessageRouter {
     static async sentCount(ctx: RouterContext, _: Next) {
@@ -242,6 +243,36 @@ export class MessageRouter {
 
         // Add to send cache
         Server().httpService.sendCache.add(tempGuid);
+
+        // Start outgoing lifecycle tracking
+        let correlationId: string | undefined;
+        if (SentryService.getInstance().isLifecycleLoggingEnabled()) {
+            correlationId = LifecycleManager.getInstance().generateCorrelationId();
+            LifecycleManager.getInstance().startOutgoingLifecycle(correlationId, {
+                tempGuid,
+                chatGuid,
+                text: message
+            });
+            
+            // Record step 1: Message Queued
+            LifecycleManager.getInstance().recordStep(correlationId, 1, "Message queued for sending");
+            
+            // Record step 2: Private API Called
+            LifecycleManager.getInstance().recordStep(correlationId, 2, `Calling Private API (method: ${method})`);
+        }
+
+        // Log outgoing message to Sentry
+        if (SentryService.getInstance().isMessageLoggingEnabled()) {
+            SentryService.getInstance().logOutgoingMessage({
+                tempGuid,
+                chatGuid,
+                text: message,
+                method,
+                subject,
+                effectId,
+                timestamp: Date.now()
+            });
+        }
 
         try {
             // Send the message

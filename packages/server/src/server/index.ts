@@ -32,7 +32,10 @@ import {
     ScheduledMessagesService,
     OauthService,
     ZrokService,
-    RemoteConfigService
+    RemoteConfigService,
+    SentryService,
+    LifecycleManager,
+    ProcessMonitorService
 } from "@server/services";
 import { EventCache } from "@server/eventCache";
 import { runTerminalScript, openSystemPreferences, startMessages } from "@server/api/apple/scripts";
@@ -369,6 +372,28 @@ class BlueBubblesServer extends EventEmitter {
 
         // Load settings from args
         this.loadSettingsFromArgs();
+
+        // Initialize Sentry if DSN is provided, or just enable lifecycle logging
+        const sentryDsn = this.args["sentry-dsn"];
+        const lifecycleLogging = this.args["sentry-lifecycle-logging"] ?? false;
+        const processMonitorEnabled = this.args["process-monitor-enabled"] ?? false;
+
+        if (sentryDsn) {
+            const errorTracking = this.args["sentry-error-tracking"] ?? true;
+            const messageLogging = this.args["sentry-message-logging"] ?? false;
+            SentryService.getInstance().initialize(sentryDsn, errorTracking, messageLogging, lifecycleLogging);
+            this.logger.info(`Sentry initialized (errors: ${errorTracking}, messages: ${messageLogging}, lifecycle: ${lifecycleLogging})`);
+        } else if (lifecycleLogging) {
+            // Enable lifecycle logging even without Sentry DSN (logs to main.log only)
+            SentryService.getInstance().enableLifecycleLogging(lifecycleLogging);
+            this.logger.info(`Lifecycle logging enabled (main.log only - no Sentry DSN provided)`);
+        }
+
+        // Start process monitor if lifecycle logging is enabled
+        if (lifecycleLogging && processMonitorEnabled) {
+            ProcessMonitorService.getInstance().start();
+            this.logger.info("Process monitor service started for lifecycle tracking");
+        }
 
         this.logger.info("Starting IPC Listeners..");
         IPCService.startIpcListeners();
@@ -1162,7 +1187,8 @@ class BlueBubblesServer extends EventEmitter {
         data: any,
         priority: "normal" | "high" = "normal",
         sendFcmMessage = true,
-        sendSocket = true
+        sendSocket = true,
+        correlationId?: string
     ) {
         if (sendSocket) {
             this.httpService?.socketServer.emit(type, data);
@@ -1186,8 +1212,39 @@ class BlueBubblesServer extends EventEmitter {
             this.logger.debug(ex);
         }
 
+        // Log incoming messages to Sentry
+        if (type === NEW_MESSAGE && SentryService.getInstance().isMessageLoggingEnabled()) {
+            SentryService.getInstance().logIncomingMessage({
+                guid: data?.guid,
+                text: data?.text,
+                sender: data?.sender,
+                chatGuid: data?.chatGuid,
+                timestamp: data?.date ?? Date.now(),
+                attachments: data?.attachments,
+                isFromMe: data?.isFromMe,
+                chatName: data?.chat?.displayName
+            });
+        }
+
         // Dispatch the webhook (sometimes it's not initialized)
-        this.webhookService?.dispatch({ type, data });
+        let webhookSuccess = true;
+        try {
+            await this.webhookService?.dispatch({ type, data });
+        } catch (ex: any) {
+            webhookSuccess = false;
+            this.logger.debug(`Webhook dispatch failed: ${ex?.message ?? String(ex)}`);
+        }
+
+        // Record step 8: Webhook Dispatched
+        if (SentryService.getInstance().isLifecycleLoggingEnabled() && correlationId) {
+            if (webhookSuccess) {
+                const webhookCount = this.webhookService?.getWebhookCount?.(type) ?? 0;
+                LifecycleManager.getInstance().recordStep(correlationId, 8, `Sent to ${webhookCount} webhook(s)`);
+            } else {
+                LifecycleManager.getInstance().recordStepError(correlationId, 8, "Webhook dispatch failed");
+            }
+            LifecycleManager.getInstance().completeLifecycle(correlationId);
+        }
     }
 
     private getTheme() {
@@ -1205,6 +1262,26 @@ class BlueBubblesServer extends EventEmitter {
     }
 
     async emitMessageMatch(message: Message, tempGuid: string) {
+        // Look up correlation ID from tempGuid for outgoing message lifecycle
+        let correlationId: string | undefined;
+        if (SentryService.getInstance().isLifecycleLoggingEnabled()) {
+            const lifecycle = LifecycleManager.getInstance().getByTempGuid(tempGuid);
+            if (lifecycle) {
+                correlationId = lifecycle.correlationId;
+                
+                // Update with actual message GUID
+                LifecycleManager.getInstance().updateMessageGuid(correlationId, message.guid);
+                
+                // Record step 4: imagent send finish (message appears in chat.db)
+                LifecycleManager.getInstance().recordStep(correlationId, 4, "Message recorded in chat.db (imagent send finish)");
+                
+                // Record step 5: apsd delivering (waiting for delivery)
+                LifecycleManager.getInstance().recordStep(correlationId, 5, "Waiting for apsd delivery confirmation");
+                
+                // Step 6 and 7 will be updated by process monitor events and database delivery detection
+            }
+        }
+
         // Insert chat & participants
         const newMessage = await insertChatParticipants(message);
         this.logger.info(`Message match found for text, [${newMessage.contentString()}]`);
@@ -1221,7 +1298,7 @@ class BlueBubblesServer extends EventEmitter {
         resp.tempGuid = tempGuid;
 
         // We are emitting this as a new message, the only difference being the included tempGuid
-        await this.emitMessage(NEW_MESSAGE, resp);
+        await this.emitMessage(NEW_MESSAGE, resp, "normal", true, true, correlationId);
     }
 
     async emitMessageError(message: Message, tempGuid: string = null) {
@@ -1522,9 +1599,32 @@ class BlueBubblesServer extends EventEmitter {
     }
 
     private async handleNewMessage(item: Message) {
+        // Start lifecycle tracking for incoming messages
+        let correlationId: string | undefined;
+        if (SentryService.getInstance().isLifecycleLoggingEnabled()) {
+            correlationId = LifecycleManager.getInstance().generateCorrelationId();
+            LifecycleManager.getInstance().startIncomingLifecycle(correlationId, {
+                messageGuid: item.guid,
+                chatGuid: item.chats?.[0]?.guid,
+                sender: item.handle?.id,
+                text: item.contentString()
+            });
+            
+            // Record step 5: ChatDB Updated
+            LifecycleManager.getInstance().recordStep(correlationId, 5, "chat.db change detected");
+            
+            // Record step 6: BlueBubbles Received
+            LifecycleManager.getInstance().recordStep(correlationId, 6, "IMessageListener.handleChangeEvent triggered");
+        }
+
         const newMessage = await insertChatParticipants(item);
         this.logger.info(
             `New Message from ${newMessage.isFromMe ? 'You' : obfuscatedHandle(newMessage.handle?.id)}, ${newMessage.contentString()}`);
+
+        // Record step 7: Message Parsed (after serialization)
+        if (SentryService.getInstance().isLifecycleLoggingEnabled() && correlationId) {
+            LifecycleManager.getInstance().recordStep(correlationId, 7, "Message serialized successfully");
+        }
 
         // Manually send the message to the socket so we can serialize it with
         // all the extra data
@@ -1554,7 +1654,8 @@ class BlueBubblesServer extends EventEmitter {
             }),
             newMessage.isFromMe ? "normal" : "high",
             true,
-            false
+            false,
+            correlationId
         );
     }
 
@@ -1569,6 +1670,60 @@ class BlueBubblesServer extends EventEmitter {
         const content = msg.contentString();
         const localeTime = msg.lastUpdateTime?.toLocaleString();
         this.logger.info(`${msg.messageStatus} message from [${from}]: [${content}] - [${localeTime}]`);
+
+        // Log delivery updates to Sentry for outgoing messages
+        if (SentryService.getInstance().isLifecycleLoggingEnabled() && msg.isFromMe) {
+            const lifecycle = LifecycleManager.getInstance().getByMessageGuid(msg.guid);
+            if (lifecycle) {
+                // Check what changed - delivered, read, etc.
+                if (msg.dateDelivered && !lifecycle.steps.has(6)) {
+                    LifecycleManager.getInstance().recordStep(lifecycle.correlationId, 6, `Delivery confirmed via chat.db (dateDelivered: ${msg.dateDelivered.toISOString()})`);
+                    
+                    SentryService.logDeliveryUpdate({
+                        correlationId: lifecycle.correlationId,
+                        messageGuid: msg.guid,
+                        tempGuid: lifecycle.tempGuid,
+                        chatGuid: msg.chats?.[0]?.guid,
+                        text: content,
+                        status: 'delivered',
+                        timestamp: msg.dateDelivered.getTime(),
+                        deliveredAt: msg.dateDelivered.getTime()
+                    });
+                }
+                
+                if (msg.dateRead && !lifecycle.steps.has(7)) {
+                    LifecycleManager.getInstance().recordStep(lifecycle.correlationId, 7, `Message read by recipient (dateRead: ${msg.dateRead.toISOString()})`);
+                    
+                    SentryService.logDeliveryUpdate({
+                        correlationId: lifecycle.correlationId,
+                        messageGuid: msg.guid,
+                        tempGuid: lifecycle.tempGuid,
+                        chatGuid: msg.chats?.[0]?.guid,
+                        text: content,
+                        status: 'read',
+                        timestamp: msg.dateRead.getTime(),
+                        deliveredAt: msg.dateDelivered?.getTime(),
+                        readAt: msg.dateRead.getTime()
+                    });
+                }
+                
+                // Check for send errors
+                if (!msg.isSent && (msg.error ?? 0) > 0) {
+                    LifecycleManager.getInstance().recordStepError(lifecycle.correlationId, 8, `Send failed: ${msg.error}`);
+                    
+                    SentryService.logDeliveryUpdate({
+                        correlationId: lifecycle.correlationId,
+                        messageGuid: msg.guid,
+                        tempGuid: lifecycle.tempGuid,
+                        chatGuid: msg.chats?.[0]?.guid,
+                        text: content,
+                        status: 'failed',
+                        timestamp: Date.now(),
+                        errorCode: msg.error
+                    });
+                }
+            }
+        }
 
         // Manually send the message to the socket so we can serialize it with
         // all the extra data

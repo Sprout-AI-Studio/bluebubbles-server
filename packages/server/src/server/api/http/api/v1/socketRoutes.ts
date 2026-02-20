@@ -42,6 +42,7 @@ import { AttachmentSerializer } from "@server/api/serializers/AttachmentSerializ
 import { MacOsInterface } from "@server/api/interfaces/macosInterface";
 import { getLogger } from "@server/lib/logging/Loggable";
 import { ProxyServices } from "@server/databases/server/constants";
+import { SentryService, LifecycleManager } from "@server/services";
 
 const unknownError = "Unknown Error. Check server logs!";
 const log = getLogger("SocketRoutes");
@@ -543,6 +544,34 @@ export class SocketRoutes {
 
             // Add to send cache
             Server().httpService.sendCache.add(tempGuid);
+
+            // Start outgoing lifecycle tracking
+            let correlationId: string | undefined;
+            if (SentryService.getInstance().isLifecycleLoggingEnabled()) {
+                correlationId = LifecycleManager.getInstance().generateCorrelationId();
+                LifecycleManager.getInstance().startOutgoingLifecycle(correlationId, {
+                    tempGuid,
+                    chatGuid,
+                    text: message
+                });
+                
+                // Record step 1: Message Queued
+                LifecycleManager.getInstance().recordStep(correlationId, 1, "Message queued for sending");
+                
+                // Record step 2: Private API Called
+                LifecycleManager.getInstance().recordStep(correlationId, 2, "Calling Private API");
+            }
+
+            // Log outgoing message to Sentry
+            if (SentryService.getInstance().isMessageLoggingEnabled()) {
+                SentryService.getInstance().logOutgoingMessage({
+                    tempGuid,
+                    chatGuid,
+                    text: message,
+                    method: "private-api",
+                    timestamp: Date.now()
+                });
+            }
 
             try {
                 let sentMessage = null;

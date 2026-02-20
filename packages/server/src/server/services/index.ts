@@ -12,6 +12,9 @@ import { WebhookService } from "./webhookService";
 import { ScheduledMessagesService } from "./scheduledMessagesService";
 import { OauthService } from "./oauthService";
 import { RemoteConfigService } from "./remoteConfigService";
+import { SentryService } from "./sentryService";
+import { LifecycleManager } from "./lifecycleManager";
+import { ProcessMonitorService } from "./processMonitorService";
 
 export {
     FCMService,
@@ -27,5 +30,8 @@ export {
     WebhookService,
     ScheduledMessagesService,
     OauthService,
-    RemoteConfigService
+    RemoteConfigService,
+    SentryService,
+    LifecycleManager,
+    ProcessMonitorService
 };
