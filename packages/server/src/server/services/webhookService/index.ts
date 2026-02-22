@@ -1,6 +1,7 @@
-import axios from "axios";
+import axios, { AxiosError } from "axios";
 import { Server } from "@server";
 import { Loggable } from "@server/lib/logging/Loggable";
+import { AsyncRetryer } from "@server/lib/decorators/AsyncRetryerDecorator";
 
 export type WebhookEvent = {
     type: string;
@@ -29,7 +30,21 @@ export class WebhookService extends Loggable {
         }
     }
 
+    @AsyncRetryer({
+        name: "WebhookService.sendPost",
+        maxTries: 3,
+        retryDelay: 5000,
+        onError: (ex: AxiosError) => {
+            // If the server responded (4xx/5xx), don't retry — it won't help
+            if (ex?.response) return { skip: true };
+            // Network-level failure — return null to trigger a retry
+            return null;
+        }
+    })
     private async sendPost(url: string, event: WebhookEvent) {
-        return await axios.post(url, event, { headers: { "Content-Type": "application/json" } });
+        return await axios.post(url, event, {
+            headers: { "Content-Type": "application/json" },
+            timeout: 30000
+        });
     }
 }
