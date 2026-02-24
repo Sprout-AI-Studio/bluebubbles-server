@@ -2,7 +2,7 @@ name: Build-BlueBubbles-Server
 
 on:
   push:
-    branches: [ master ]
+    branches: [ feature/add-retry-mechanisms-in-webhook-dispatch ]
 
 jobs:
   build:
