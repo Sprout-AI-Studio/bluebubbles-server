@@ -19,7 +19,7 @@ module.exports = {
                 owner: "Sprout-AI-Studio",
                 private: false,
                 channel: "latest",
-                releaseType: "draft",
+                releaseType: "release",
                 vPrefixedTagName: true
             }
         ],

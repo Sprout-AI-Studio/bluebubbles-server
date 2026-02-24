@@ -1,8 +1,7 @@
 name: Build-BlueBubbles-Server
 
 on:
-  push:
-    branches: [ feature/add-retry-mechanisms-in-webhook-dispatch ]
+  workflow_dispatch:
 
 jobs:
   build:
