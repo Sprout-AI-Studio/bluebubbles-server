@@ -19,6 +19,7 @@ import { StartViaTerminalField } from '../../../components/fields/StartViaTermin
 import { StartMinimizedField } from '../../../components/fields/StartMinimizedField';
 import { StartDelayField } from 'app/components/fields/StartDelayField';
 import { LandingPageField } from 'app/components/fields/LandingPageField';
+import { CustomEnvironmentField } from 'app/components/fields/CustomEnvironmentField';
 import { OpenFindMyOnStartupField } from 'app/components/fields/OpenFindMyOnStartupField';
 import { AutoLockMacField } from 'app/components/fields/AutoLockMacField';
 
@@ -59,6 +60,8 @@ export const FeatureSettings = (): JSX.Element => {
                                 <StartViaTerminalField />
                                 <Spacer />
                                 <LandingPageField />
+                                <Spacer />
+                                <CustomEnvironmentField />
                             </Stack>
                         </AccordionPanel>
                     </AccordionItem>

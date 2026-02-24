@@ -54,6 +54,7 @@ export const DEFAULT_DB_ITEMS: { [key: string]: () => any } = {
     zrok_reserved_name: () => "",
     zrok_reserved_token: () => "",
     landing_page_path: () => "",
+    custom_environment: () => "",
     open_findmy_on_startup: () => 1,
     auto_lock_mac: () => 0,
 };
