@@ -47,16 +47,24 @@ export const AsyncRetryer = <T extends (...args: any[]) => any>({
                 delayMs: retryDelay,
                 getData: async () => {
                     counter += 1;
+                    logger.debug(`[AsyncRetryer] '${name}' — attempt ${counter}/${maxTries}`);
                     try {
                         const data = await originalMethod.apply(this, args);
                         error = undefined;
+                        logger.debug(`[AsyncRetryer] '${name}' — attempt ${counter} succeeded`);
 
                         if (onSuccess) return onSuccess(data);
                         return data;
                     } catch (ex: any) {
                         error = ex;
-                        logger.debug(`Error executing method, '${name}' on attempt ${counter} of ${maxTries}!`);
-                        logger.debug(`  -> Execution Error: ${ex?.message ?? String(ex)}`);
+                        const willRetry = counter < maxTries;
+                        logger.warn(`[AsyncRetryer] '${name}' — attempt ${counter}/${maxTries} failed: ${ex?.message ?? String(ex)}`);
+                        if (ex?.response) {
+                            logger.warn(`[AsyncRetryer] '${name}' — HTTP ${ex.response.status} ${ex.response.statusText} (no retry for server responses)`);
+                        }
+                        if (willRetry) {
+                            logger.debug(`[AsyncRetryer] '${name}' — retrying in ${retryDelay}ms...`);
+                        }
 
                         if (onError) return onError(ex as Error) ?? null;
                         return null;
@@ -66,7 +74,7 @@ export const AsyncRetryer = <T extends (...args: any[]) => any>({
             });
 
             if (error) {
-                logger.debug(`Method, '${name}', failed after ${maxTries} attempts!`);
+                logger.warn(`[AsyncRetryer] '${name}' — all ${counter} attempt(s) failed, giving up`);
                 throw error;
             }
 

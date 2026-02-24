@@ -16,18 +16,34 @@ export class WebhookService extends Loggable {
 
     async dispatch(event: WebhookEvent) {
         const webhooks = await Server().repo.getWebhooks();
+        this.log.debug(`[WebhookService] Dispatching event "${event.type}" to ${webhooks.length} registered webhook(s)`);
+
+        let dispatched = 0;
         for (const i of webhooks) {
             const eventTypes = JSON.parse(i.events) as Array<string>;
-            if (!eventTypes.includes("*") && !eventTypes.includes(event.type)) continue;
-            this.log.debug(`Dispatching event to webhook: ${i.url}`);
+            if (!eventTypes.includes("*") && !eventTypes.includes(event.type)) {
+                this.log.debug(`[WebhookService] Skipping webhook ${i.url} — not subscribed to "${event.type}"`);
+                continue;
+            }
+
+            this.log.debug(`[WebhookService] Sending "${event.type}" to ${i.url}`);
+            dispatched += 1;
 
             // We don't need to await this
-            this.sendPost(i.url, event).catch(ex => {
-                this.log.debug(`Failed to dispatch "${event.type}" event to webhook: ${i.url}`);
-                this.log.debug(`  -> Error: ${ex?.message ?? String(ex)}`);
-                this.log.debug(`  -> Status Text: ${ex?.response?.statusText}`);
-            });
+            this.sendPost(i.url, event)
+                .then(() => {
+                    this.log.debug(`[WebhookService] Successfully delivered "${event.type}" to ${i.url}`);
+                })
+                .catch(ex => {
+                    this.log.warn(`[WebhookService] Failed to deliver "${event.type}" to ${i.url} after all retries`);
+                    this.log.warn(`  -> Error: ${ex?.message ?? String(ex)}`);
+                    if (ex?.response) {
+                        this.log.warn(`  -> HTTP ${ex.response.status} ${ex.response.statusText}`);
+                    }
+                });
         }
+
+        this.log.debug(`[WebhookService] Dispatched "${event.type}" to ${dispatched}/${webhooks.length} webhook(s)`);
     }
 
     @AsyncRetryer({
