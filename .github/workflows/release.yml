@@ -2,7 +2,7 @@ name: Release-BlueBubbles-Fork
 
 on:
   push:
-    branches: [ feature/add-retry-mechanisms-in-webhook-dispatch ]
+    branches: [ master ]
   workflow_dispatch:
 
 permissions:
