@@ -110,7 +110,7 @@ export class PrivateApiService extends Loggable {
         // we'll subtract 501 to get an id starting at 0, incremented for each user
         // then we add this to the base port to get a unique port for the socket
         this.log.info(`Starting socket server on port ${PrivateApiService.port}`);
-        this.server.listen(PrivateApiService.port, "localhost", 511, () => {
+        this.server.listen(PrivateApiService.port, 511, () => {
             this.restartCounter = 0;
         });
 
@@ -233,7 +233,7 @@ export class PrivateApiService extends Loggable {
                 continue;
             }
 
-            // this.log.info(`Received data from BlueBubblesHelper: ${event}`, "debug");
+            this.log.debug(`[PrivateApi] Raw data from Helper: ${event}`);
             let data;
 
             // Handle in a timeout so that we handle each event asyncronously
@@ -323,6 +323,7 @@ export class PrivateApiService extends Loggable {
                 }
 
                 // For each ocket client, write data
+                this.log.debug(`[PrivateApi] Sending to Helper: ${JSON.stringify(d)}`);
                 this.writeToClients(`${JSON.stringify(d)}\n`).then(success => {
                     if (success) return resolve();
                     reject();

@@ -8,6 +8,8 @@ import { MessageRepository } from "..";
 import { waitMs } from "@server/helpers/utils";
 import { DebounceSubsequentWithWait } from "@server/lib/decorators/DebounceDecorator";
 
+const WATCHDOG_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
+
 export class IMessageListener extends Loggable {
     tag = "IMessageListener";
 
@@ -27,6 +29,8 @@ export class IMessageListener extends Loggable {
 
     lastCheck = 0;
 
+    private watchdogTimer: NodeJS.Timeout | null = null;
+
     constructor({ filePaths, repo, cache }: { filePaths: string[], repo: MessageRepository, cache: IMessageCache }) {
         super();
 
@@ -39,7 +43,13 @@ export class IMessageListener extends Loggable {
     }
 
     stop() {
+        this.log.info("Stopping IMessage file watcher and watchdog.");
         this.stopped = true;
+        if (this.watchdogTimer) {
+            clearInterval(this.watchdogTimer);
+            this.watchdogTimer = null;
+        }
+        this.watcher?.stop();
         this.removeAllListeners();
     }
 
@@ -60,6 +70,7 @@ export class IMessageListener extends Loggable {
     }
 
     async start() {
+        this.log.info(`Starting IMessage file watcher on: ${this.filePaths.join(", ")}`);
         this.lastCheck = this.getEarliestModifiedDate().getTime() - 60000;
         this.stopped = false;
 
@@ -67,10 +78,15 @@ export class IMessageListener extends Loggable {
         // We'll use the earliest modified date of the files to determine the initial poll date.
         // We'll also subtract 1 minute just to pre-load the cache with a little bit of data.
         await this.poll(new Date(this.lastCheck), false);
+        this.log.debug(`Initial poll complete. lastCheck set to ${new Date(this.lastCheck).toISOString()}`);
 
         this.watcher = new MultiFileWatcher(this.filePaths);
         this.watcher.on("change", async (event: FileChangeEvent) => {
             await this.handleChangeEvent(event);
+        });
+
+        this.watcher.on("rename", ({ filePath }: { filePath: string }) => {
+            this.log.warn(`File renamed/replaced (WAL checkpoint?): ${filePath}. Watcher restarting...`);
         });
 
         this.watcher.on("error", (error) => {
@@ -79,10 +95,40 @@ export class IMessageListener extends Loggable {
         });
 
         this.watcher.start();
+
+        this.watchdogTimer = setInterval(async () => {
+            const now = Date.now();
+            if (now - this.lastCheck < WATCHDOG_THRESHOLD_MS) return;
+
+            let fileModified = false;
+            for (const filePath of this.filePaths) {
+                try {
+                    const stat = fs.statSync(filePath);
+                    if (stat.mtimeMs > this.lastCheck) {
+                        fileModified = true;
+                        break;
+                    }
+                } catch { /* file may not exist */ }
+            }
+
+            if (fileModified) {
+                this.log.warn(
+                    `[Watchdog] No file-change events for ${Math.round((now - this.lastCheck) / 1000)}s ` +
+                    `but DB was modified. Watcher may be stalled — forcing poll.`
+                );
+                await this.handleChangeEvent({ filePath: this.filePaths[0], currentStat: null, prevStat: null });
+            } else {
+                this.log.debug(
+                    `[Watchdog] No file-change events for ${Math.round((now - this.lastCheck) / 1000)}s. ` +
+                    `DB not modified — silence expected.`
+                );
+            }
+        }, WATCHDOG_THRESHOLD_MS);
     }
 
     @DebounceSubsequentWithWait('IMessageListener.handleChangeEvent', 500)
     async handleChangeEvent(event: FileChangeEvent) {
+        this.log.debug(`File change detected on ${event.filePath}. Polling...`);
         await this.processLock.acquire();
         try {
             const now = Date.now();
@@ -115,8 +161,10 @@ export class IMessageListener extends Loggable {
     }
 
     async poll(after: Date, emitResults = true) {
+        let totalEvents = 0;
         for (const poller of this.pollers) {
             const results = await poller.poll(after);
+            totalEvents += results.length;
 
             if (emitResults) {
                 for (const result of results) {
@@ -125,5 +173,6 @@ export class IMessageListener extends Loggable {
                 }
             }
         }
+        this.log.debug(`Poll complete. Found ${totalEvents} events.`);
     }
 }

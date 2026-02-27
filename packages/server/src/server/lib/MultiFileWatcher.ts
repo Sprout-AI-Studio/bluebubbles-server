@@ -39,6 +39,17 @@ export class MultiFileWatcher extends EventEmitter {
 
         const watcher = fs.watch(filePath, { encoding: "utf8", persistent: false, recursive: false });
         watcher.on("change", async (eventType, _) => {
+            if (eventType === "rename") {
+                this.emit("rename", { filePath });
+                this.watchers = this.watchers.filter(w => w !== watcher);
+                watcher.close();
+                await new Promise(r => setTimeout(r, 200));
+                this.watchFile(filePath);
+                const currentStat = fs.existsSync(filePath) ? await fs.promises.stat(filePath) : null;
+                this.emit("change", { filePath, prevStat: this.previousStats[filePath], currentStat });
+                if (currentStat) this.previousStats[filePath] = currentStat;
+                return;
+            }
             if (eventType !== "change") return;
 
             const currentStat = await fs.promises.stat(filePath);
