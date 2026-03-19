@@ -2,7 +2,7 @@ name: Release-BlueBubbles-Fork
 
 on:
   push:
-    branches: [ master ]
+    branches: [ feat/integration-with-slack-for-alerts ]
   workflow_dispatch:
 
 permissions:
