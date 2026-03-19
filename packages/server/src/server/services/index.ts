@@ -12,6 +12,7 @@ import { WebhookService } from "./webhookService";
 import { ScheduledMessagesService } from "./scheduledMessagesService";
 import { OauthService } from "./oauthService";
 import { RemoteConfigService } from "./remoteConfigService";
+import { SlackAlertService } from "./slackAlertService";
 
 export {
     FCMService,
@@ -27,5 +28,6 @@ export {
     WebhookService,
     ScheduledMessagesService,
     OauthService,
-    RemoteConfigService
+    RemoteConfigService,
+    SlackAlertService
 };

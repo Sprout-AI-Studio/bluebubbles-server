@@ -3,6 +3,7 @@ import { Box, Text, Divider, Stack } from '@chakra-ui/react';
 import { ConnectionSettings } from './connection/ConnectionSettings';
 import { FeatureSettings } from './features/FeatureSettings';
 import { PrivateApiSettings } from './privateApi/PrivateApiSettings';
+import { SlackAlertSettings } from './slackAlerts/SlackAlertSettings';
 import { UpdateSettings } from './update/UpdateSettings';
 import { ResetSettings } from './reset/ResetSettings';
 import { ThemeSettings } from './theme/ThemeSettings';
@@ -17,6 +18,7 @@ export const SettingsLayout = (): JSX.Element => {
                 <ConnectionSettings />
                 <PrivateApiSettings />
                 <FeatureSettings />
+                <SlackAlertSettings />
                 <UpdateSettings />
                 <ThemeSettings />
                 <Stack direction='row' align='flex-start' flexWrap='wrap' p={5}>

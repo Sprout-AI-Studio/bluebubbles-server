@@ -32,7 +32,8 @@ import {
     ScheduledMessagesService,
     OauthService,
     ZrokService,
-    RemoteConfigService
+    RemoteConfigService,
+    SlackAlertService
 } from "@server/services";
 import { EventCache } from "@server/eventCache";
 import { runTerminalScript, openSystemPreferences, startMessages } from "@server/api/apple/scripts";
@@ -147,6 +148,8 @@ class BlueBubblesServer extends EventEmitter {
     proxyServices: Proxy[];
 
     webhookService: WebhookService;
+
+    slackAlertService: SlackAlertService;
 
     oauthService: OauthService;
 
@@ -507,6 +510,13 @@ class BlueBubblesServer extends EventEmitter {
         } catch (ex: any) {
             this.logger.error(`Failed to initialize Remote Config Service! ${ex?.message ?? String(ex)}}`);
         }
+
+        try {
+            this.logger.info("Initializing Slack Alert Service...");
+            this.slackAlertService = new SlackAlertService();
+        } catch (ex: any) {
+            this.logger.error(`Failed to initialize Slack Alert Service! ${ex?.message ?? String(ex)}`);
+        }
     }
 
     /**
@@ -574,6 +584,13 @@ class BlueBubblesServer extends EventEmitter {
         } catch (ex: any) {
             this.logger.error(`Failed to start Remote Config Service! ${ex?.message ?? String(ex)}}`);
         }
+
+        try {
+            this.logger.info("Starting Slack Alert Service...");
+            this.slackAlertService?.start();
+        } catch (ex: any) {
+            this.logger.error(`Failed to start Slack Alert Service! ${ex?.message ?? String(ex)}`);
+        }
     }
 
     async stopServices(): Promise<void> {
@@ -627,6 +644,12 @@ class BlueBubblesServer extends EventEmitter {
             this.remoteConfigService?.stop();
         } catch (ex: any) {
             this.logger.error(`Failed to stop Remote Config Service! ${ex?.message ?? ex}`);
+        }
+
+        try {
+            this.slackAlertService?.stop();
+        } catch (ex: any) {
+            this.logger.error(`Failed to stop Slack Alert Service! ${ex?.message ?? ex}`);
         }
 
         this.logger.info("Finished stopping services...");
@@ -1131,6 +1154,19 @@ class BlueBubblesServer extends EventEmitter {
                 this.log("Auto-start at login item enabled!");
             } else if (nextAutoStart === AutoStartMethods.LaunchAgent) {
                 await FileSystem.createLaunchAgent();
+            }
+        }
+
+        // Handle when slack alerts config changes
+        if (
+            prevConfig.slack_alerts_enabled !== nextConfig.slack_alerts_enabled ||
+            prevConfig.slack_webhook_url !== nextConfig.slack_webhook_url
+        ) {
+            this.slackAlertService?.stop();
+            const enabled = nextConfig.slack_alerts_enabled as boolean;
+            const webhookUrl = nextConfig.slack_webhook_url as string;
+            if (enabled && webhookUrl) {
+                this.slackAlertService?.start();
             }
         }
 
